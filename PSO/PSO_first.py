@@ -4,11 +4,14 @@ Created on Thu Apr 18 15:05:23 2019
 
 @author: david
 """
-
+import os
 import time
+from operator import itemgetter
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from addict import Dict
 
 """
 改变问题规模时需要改动的参数：工件参数workpiece，工序数目process，机器数目machine，
@@ -16,228 +19,352 @@ import numpy as np
 """
 
 
-# 讀取 RAWDATA
-contents = []
-with open("data_first.txt") as f:
-    string = f.readlines()
-    for item in string:
-        contents.append(item.strip().split(" "))
+# 建立絕對路徑
+def get_abs_path(parameter: dict) -> dict:
+    # 複製
+    para_path = parameter["path"]
+
+    # 取得當前路徑
+    cwd = os.getcwd()
+
+    # 建立 rawdata 的絕對路徑
+    para_path["rawdata"] = os.path.join(
+        cwd, para_path["rawdata"], para_path["filename"]
+    )
+
+    # 建立 result 的絕對路徑
+    para_path["result"] = os.path.join(cwd, para_path["result"])
+    return para_path
+
+
+# 檢查資料夾和檔案是否存在
+def check_dir_exist(parameter: dict) -> None:
+    # 複製
+    para_path = parameter["path"]
+
+    if not os.path.exists(para_path["rawdata"]):
+        raise FileNotFoundError(f"{para_path['rawdata']} 不存在!")
+
+    if not os.path.exists(para_path["result"]):
+        os.makedirs(parameter["result"], exist_ok=True)
+
+
+# 移除不可使用的機台
+def regular_data(parameter: dict) -> dict:
+    # 複製
+    raw = parameter["data"]["raw"].copy()
+
+    # 初始化
+    data = Dict()
+
+    # by normal
+    for (job, opra), row in raw.iterrows():
+        # 新增
+        data[job][opra] = {k: v for k, v in row.items() if v != "-"}
+    return data
+
+
+# 將工時歸一化後進行排序，最後取累積和
+def normalize_data(parameter: dict) -> dict:
+    # 複製
+    raw = parameter["data"]["raw"].copy()
+
+    # 將不可用機台的工時，以 na 取代
+    raw.replace("-", pd.NA, inplace=True)
+
+    # 初始化
+    normal = Dict()
+
+    # by normal
+    for (job, opra), row in raw.iterrows():
+        # 取倒數
+        reciprocal = 1 / row
+        # 倒數加總
+        sigma = reciprocal.sum()
+        # 歸一化
+        normalization = reciprocal / sigma
+        # 排序
+        normalization.sort_values(inplace=True)
+        # 累積和
+        cumsum = normalization.cumsum()
+        # 新增
+        normal[job][opra] = {k: v for k, v in cumsum.items() if pd.notna(v)}
+    return normal
+
+
+# 取得排程參數
+def get_fjsp_parameter(parameter: dict) -> dict:
+    # 複製
+    data = parameter["data"]
+
+    # 初始化
+    fjsp = Dict()
+
+    # 機台數目
+    fjsp["machine"]["size"] = data["raw"].columns.size
+    fjsp["machine"]["seq"] = data["raw"].columns.tolist()
+
+    # 工件數目
+    fjsp["job"]["size"] = len(data["regular"].keys())
+    fjsp["job"]["seq"] = list(data["regular"].keys())
+
+    # 製程數目
+    fjsp["opra"]["seq"] = [len(v) for v in data["regular"].values()]
+    fjsp["opra"]["size"] = sum(fjsp["opra"]["seq"])
+    return fjsp
 
 
 # 初始化種族、速度和計算適應值
-def init_pop_v_fit():
+def initial_population(parameter: dict) -> tuple:
+    # 複製
+    para_alg = parameter["alg"]
+    para_fjsp = parameter["fjsp"]
+    para_data = parameter["data"]
+
     # 初始化種族(前半為投料順序，後半為加工機台)
-    pop = np.zeros((popsize, total_process * 2))
-    # 初始化速度(前半為投料順序，後半為加工機台)
-    v = np.zeros((popsize, total_process * 2))
+    pop = np.zeros((para_alg["popsize"], para_fjsp["opra"]["size"] * 2))
+
+    # 初始化速率(前半為投料順序，後半為加工機台)
+    vel = np.zeros_like(pop)
+
     # 初始化適應值
-    fitness = np.zeros(popsize)
+    fitness = np.zeros(para_alg["popsize"])
 
     # 逐粒子
-    for i in range(popsize):
+    for idx in range(para_alg["popsize"]):
+        # 取得粒子
+        particle = pop[idx]
+
         # 隨機生成投料順序
-        for j in range(workpiece):
-            for p in range(process):
-                pop[i][j * process + p] = j + 1
-        np.random.shuffle(pop[i][:total_process])
+        os = list()
+        for job, opra_size in zip(para_fjsp["job"]["seq"], para_fjsp["opra"]["seq"]):
+            os += [job] * opra_size
+        particle[: para_fjsp["opra"]["size"]] = os
+        np.random.shuffle(particle[: para_fjsp["opra"]["size"]])
 
         # 隨機生成加工機台
-        for j in range(total_process):
-            index = np.random.randint(0, machine)
-            while contents[j][index] == "-":
-                index = np.random.randint(0, machine)
-            pop[i][j + total_process] = index + 1
+        ms = list()
+        for job, opra_machine_len in para_data["regular"].items():
+            for opra, machine_len in opra_machine_len.items():
+                machine = list(machine_len.keys())
+                ms.append(np.random.choice(machine))
+        particle[para_fjsp["opra"]["size"] :] = ms
 
         # 計算粒子的適應值(總完工時間)
-        fitness[i] = calculate(pop[i])
-    return pop, v, fitness
+        fitness[idx] = calculate(particle=particle, parameter=parameter)
+    return (pop, vel, fitness)
 
 
 # 計算粒子的適應值(總完工時間)
-def calculate(x):
-    # 输入:粒子位置，输出:粒子适应度值
-    Tm = np.zeros(machine)  # 每一機台的結束時間
-    Te = np.zeros((workpiece, process))  # 每一工件每一製程的結束時間
-    array = handle(x)  # 投料順序(工件編號, 製程編號)
+def calculate(particle: np.array, parameter: dict):
+    # 複製
+    para_fjsp = parameter["fjsp"]
+    data = parameter["data"]["regular"]
 
-    for i in range(total_process):
+    # 初始化
+    Tm = np.zeros(para_fjsp["machine"]["size"])  # 每一機台的結束時間
+    To = np.zeros(
+        (para_fjsp["job"]["size"], max(para_fjsp["opra"]["seq"]))
+    )  # 每一工件每一製程的結束時間
+
+    # 投料順序(工件編號, 製程編號)
+    OS = decoding_OS(particle=particle, parameter=parameter)
+    MS = decoding_MS(particle=particle, parameter=parameter)
+
+    for os_ in OS:
         # 取得工時
-        machine_index = (
-            int(x[total_process + (array[i][0] - 1) * process + (array[i][1] - 1)]) - 1
-        )  # contents 的 col
-        process_index = (array[i][0] - 1) * process + (
-            array[i][1] - 1
-        )  # contents 的 row
-        process_time = int(contents[process_index][machine_index])  # 工時
+        job = os_[0]  # 工件編號
+        opra = os_[1]  # 製程編號
+        machine = MS[os_]  # 機台編號
+        length = data[job][opra][machine]  # 工時
 
         # 若為第一道製程，則被選中機台的結束時間直接加上工時
-        if array[i][1] == 1:
-            Tm[machine_index] += process_time
-            Te[array[i][0] - 1][array[i][1] - 1] = Tm[machine_index]
+        if opra == 0:
+            Tm[machine] += length
+            To[job, opra] = Tm[machine]
         # 若不為第一道製程，則機台結束時間為 max(前一製程結束時間, 被選中機台結束時間) + 工時
         else:
-            Tm[machine_index] = (
-                max(Te[array[i][0] - 1][array[i][1] - 2], Tm[machine_index])
-                + process_time
-            )
-            Te[array[i][0] - 1][array[i][1] - 1] = Tm[machine_index]
+            Tm[machine] = max(To[job, opra - 1], Tm[machine]) + length
+            To[job, opra] = Tm[machine]
     return max(Tm)
 
 
-# 投料順序(工件編號, 製程編號)
-def handle(x):
-    # 输入：粒子的位置，输出：对工序部分处理后的列表
-    piece_mark = np.zeros(workpiece)  # 统计工序的标志
-    array = []  # 经过处理后的工序列表
-    for i in range(total_process):
-        piece_mark[int(x[i] - 1)] += 1
-        array.append((int(x[i]), int(piece_mark[int(x[i] - 1)])))
-    return array
+# 將 OS 解譯為帶有(工件編號, 製程編號)的投料順序
+def decoding_OS(particle: np.array, parameter: dict) -> list:
+    # 複製
+    para_fjsp = parameter["fjsp"]
+
+    # 初始化
+    opra_ct = np.zeros(parameter["fjsp"]["job"]["size"], dtype=int)  # 紀錄每一工件的製程數
+    job_with_opra = list()  # 帶有(工件編號, 製程編號)的投料順序
+
+    # 取得原始 OS
+    OS = particle[: para_fjsp["opra"]["size"]]
+
+    # 逐個將 os 附上相應的 opra
+    for job in OS:
+        job = int(job)  # to int
+        job_with_opra.append((job, opra_ct[job]))  # (工件編號, 製程編號)
+        opra_ct[job] += 1  # 更新
+    return job_with_opra
+
+
+# 將 MS 解譯為帶有(工件編號, 製程編號)的被選中機台
+def decoding_MS(particle: np.array, parameter: dict) -> dict:
+    # 複製
+    para_fjsp = parameter["fjsp"]
+
+    # 初始化
+    ct = 0
+    job_with_opra = dict()  # 帶有(工件編號, 製程編號)的被選中機台
+
+    # 取得原始 MS
+    MS = particle[para_fjsp["opra"]["size"] :]
+
+    # 逐個將 ms 附上相應的 (job, opra)
+    for idx, job in enumerate(para_fjsp["job"]["seq"]):
+        for opra_size in range(para_fjsp["opra"]["seq"][idx]):
+            job_with_opra[(job, opra_size)] = int(MS[ct])
+            ct += 1
+    return job_with_opra
 
 
 # 取得初始總族的 gbest 和 pbest
-def get_init_best(fitness, pop):
-    # 群体最优的粒子位置及其适应度值
-    gbestpop, gbestfitness = pop[fitness.argmin()].copy(), fitness.min()
-    # 个体最优的粒子位置及其适应度值,使用copy()使得对pop的改变不影响pbestpop，pbestfitness类似
-    pbestpop, pbestfitness = pop.copy(), fitness.copy()
-    return gbestpop, gbestfitness, pbestpop, pbestfitness
+def get_init_best(pop: np.array, fitness: np.array) -> tuple:
+    # gbest
+    f_min_idx = fitness.argmin()  # 編號
+    gbest_f = fitness[f_min_idx]  # 適應值
+    gbest_x = pop[f_min_idx].copy()  # 粒子
+
+    # pbest
+    pbest_x = pop.copy()
+    pbest_f = fitness.copy()
+    return (gbest_x, gbest_f, pbest_x, pbest_f)
 
 
 if __name__ == "__main__":
-    # 排程參數
-    machine = 6  # 機台數目
-    workpiece = 10  # 工件數目
-    process = 5  # 每一工件的工序數目
-    total_process = workpiece * process  # 工件數目 × 工序數目
+    # 參數表
+    parameter = {
+        # 路徑
+        "path": {
+            "rawdata": "rawdata",
+            "result": "result",
+            "filename": "data_second.xlsx",
+        },
+        # 演算法參數
+        "alg": {"maxiter": 500, "popsize": 50, "w": 0.9, "c": (2, 2)},
+        # 資料
+        "data": {"raw": pd.DataFrame, "regular": dict, "normal": dict},
+    }
 
-    # PSO 參數
-    maxgen = 500  # 最大迭代次數
-    w = 0.9  # 慣性權重
-    lr = (2, 2)  # C1, C2
-    popsize = 50  # 種族規模
-    rangepop = (1, 6)  # 粒子编码中机器选择部分的范围
+    # 建立絕對路徑
+    parameter["path"] = get_abs_path(parameter=parameter)
 
-    # 逐 row 的將 RAWDATA 的工時進行歸一化，並儲存到 clean_contents
-    clean_contents = []
-    for i in range(total_process):
-        # 若工時不為 -，則進行儲存，格式為 [工時, 機台編號]
-        clean_contents.append(
-            [
-                [int(contents[i][j]), j + 1]
-                for j in range(machine)
-                if contents[i][j] != "-"
-            ]
-        )
-        # 對該 row 的工時取倒數，並且加總為 temp_sum
-        temp_sum = 0
-        for j in range(len(clean_contents[i])):
-            temp_sum += 1 / clean_contents[i][j][0]
-        # 對該 row 的工時取倒數，並且除以 temp_sum，進行歸一化
-        for j in range(len(clean_contents[i])):
-            clean_contents[i][j][0] = (1 / clean_contents[i][j][0]) / temp_sum
-        # 按工時，對該 row 由小到大進行排序後，逐一加總
-        clean_contents[i].sort()
-        cumulation = 0
-        for j in range(len(clean_contents[i])):
-            cumulation += clean_contents[i][j][0]
-            clean_contents[i][j][0] = cumulation
+    # 檢查資料夾是否存在
+    check_dir_exist(parameter=parameter)
+
+    # 讀取資料
+    parameter["data"]["raw"] = pd.read_excel(
+        parameter["path"]["rawdata"], index_col=[0, 1]
+    )
+
+    # 移除不可使用的機台
+    parameter["data"]["regular"] = regular_data(parameter=parameter)
+
+    # 將工時歸一化後進行排序，最後取累積和
+    parameter["data"]["normal"] = normalize_data(parameter=parameter)
+
+    # 取得排程參數
+    parameter["fjsp"] = get_fjsp_parameter(parameter=parameter)
 
     # 初始化種族、速度和計算適應值
-    pop, v, fitness = init_pop_v_fit()
+    (pop, vel, fitness) = initial_population(parameter=parameter)
+
     # 取得初始總族的 gbest 和 pbest
-    gbestpop, gbestfitness, pbestpop, pbestfitness = get_init_best(fitness, pop)
+    gbest_pop, gbest_fitness, pbest_pop, pbest_fitness = get_init_best(
+        pop=pop, fitness=fitness
+    )
 
     # 每代最小的 pbest
-    iter_process = np.zeros(maxgen)
+    iter_process = np.zeros(parameter["alg"]["maxiter"])
     # 每代的 gbest
-    pso_base = np.zeros(maxgen)
+    pso_base = np.zeros(parameter["alg"]["maxiter"])
 
     # 開始計算時間
     begin = time.time()
 
     # 開始迭代
-    for i in range(maxgen):
+    for iter_ in range(parameter["alg"]["maxiter"]):
         # 速度更新
-        for j in range(popsize):
-            v[j] = (
-                w * v[j]
-                + lr[0] * np.random.rand() * (pbestpop[j] - pop[j])
-                + lr[1] * np.random.rand() * (gbestpop - pop[j])
+        for idx in range(parameter["alg"]["popsize"]):
+            vel[idx] = (
+                parameter["alg"]["w"] * vel[idx]
+                + parameter["alg"]["c"][0]
+                * np.random.rand()
+                * (pbest_pop[idx] - pop[idx])
+                + parameter["alg"]["c"][1] * np.random.rand() * (gbest_pop - pop[idx])
             )
 
         # 位置更新(工序部分)
-        # 說白了就只是 X+V 後，附上原先 X 對應的工件編號，按新的 X 並由小到大排序，得到新的投料順序
-        for j in range(popsize):
-            store = []
-            before = pop[j][:total_process].copy()
-            pop[j] += v[j]
-            reference = v[j][:total_process].copy()
-            for p in range(total_process):
-                store.append((reference[p], before[p]))
-            store.sort()
-            for p in range(total_process):
-                pop[j][p] = store[p][1]
+        # 當 x' = x + v 以後
+        # os 部分會變成範圍未知的浮點數
+        # 這時將原先的 os 與 x'(os部分) 綁定在一起
+        # 然後按 x'(os部分) 排序，就能得到新的 os
+        for idx in range(parameter["alg"]["popsize"]):
+            os_before = pop[idx][: parameter["fjsp"]["opra"]["size"]].copy()
+            pop[idx] += vel[idx]
+            os_after = vel[idx][: parameter["fjsp"]["opra"]["size"]].copy()
+            pair = [
+                (os_after[i], os_before[i])
+                for i in range(parameter["fjsp"]["opra"]["size"])
+            ]
+            pair = sorted(pair, key=itemgetter(0))
+            for i, (_, job) in enumerate(pair):
+                pop[idx][i] = job
         pop = np.ceil(pop)
 
         # 位置更新(機器部分)
-        for j in range(popsize):
-            array = handle(pop[j])
-            for p in range(total_process):
+        for idx in range(parameter["alg"]["popsize"]):
+            ms = decoding_MS(particle=pop[idx], parameter=parameter)
+            ct = parameter["fjsp"]["opra"]["size"]
+            for (job, opra), machine in ms.items():
                 # 如果機台編號超出範圍，或者選到的機台所對應工時為空，則修正為最長工時的機台
                 if (
-                    pop[j][
-                        total_process + (array[p][0] - 1) * process + (array[p][1] - 1)
-                    ]
-                    < rangepop[0]
-                    or pop[j][
-                        total_process + (array[p][0] - 1) * process + (array[p][1] - 1)
-                    ]
-                    > rangepop[1]
-                ) or (
-                    contents[(array[p][0] - 1) * process + (array[p][1] - 1)][
-                        int(
-                            pop[j][
-                                total_process
-                                + (array[p][0] - 1) * process
-                                + (array[p][1] - 1)
-                            ]
-                            - 1
-                        )
-                    ]
-                    == "-"
+                    machine not in parameter["fjsp"]["machine"]["seq"]
+                    or machine not in parameter["data"]["regular"][job][opra].keys()
                 ):
-                    row = (array[p][0] - 1) * process + (array[p][1] - 1)
-                    pop[j][
-                        total_process + (array[p][0] - 1) * process + (array[p][1] - 1)
-                    ] = clean_contents[row][len(clean_contents[row]) - 1][1]
+                    min_len_machine = list(
+                        parameter["data"]["normal"][job][opra].keys()
+                    )[-1]
+                    pop[idx][ct] = min_len_machine
+                ct += 1
 
         # 紀錄當代最小的 pbest
-        iter_process[i] = fitness.min()
+        iter_process[iter_] = fitness.min()
         # 紀錄當代的 gbest
-        pso_base[i] = gbestfitness
+        pso_base[iter_] = gbest_fitness
 
         # 計算粒子的適應值(總完工時間)
-        for j in range(popsize):
-            fitness[j] = calculate(pop[j])
+        for idx in range(parameter["alg"]["popsize"]):
+            fitness[idx] = calculate(particle=pop[idx], parameter=parameter)
 
         # 更新每一粒子的 pbest
-        for j in range(popsize):
-            if fitness[j] < pbestfitness[j]:
-                pbestfitness[j] = fitness[j]
-                pbestpop[j] = pop[j].copy()
+        for idx in range(parameter["alg"]["popsize"]):
+            if fitness[idx] < pbest_fitness[idx]:
+                pbest_fitness[idx] = fitness[idx]
+                pbest_pop[idx] = pop[idx].copy()
 
         # 更新 gbest
-        if pbestfitness.min() < gbestfitness:
-            gbestfitness = pbestfitness.min()
-            gbestpop = pop[pbestfitness.argmin()].copy()
+        if pbest_fitness.min() < gbest_fitness:
+            gbest_fitness = pbest_fitness.min()
+            gbest_pop = pop[pbest_fitness.argmin()].copy()
 
     # 結束計算時間
     end = time.time()
 
     # 文字打印
     print("按照完全随机初始化的pso算法求得的最好的最大完工时间：", min(pso_base))
-    print("按照完全随机初始化的pso算法求得的最好的工艺方案：", gbestpop)
+    print("按照完全随机初始化的pso算法求得的最好的工艺方案：", gbest_pop)
     print(f"整个迭代过程所耗用的时间：{end - begin:.2f}s")
 
     # 圖片打印
