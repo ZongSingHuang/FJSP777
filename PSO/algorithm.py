@@ -177,7 +177,7 @@ class PSO:
     # 將 os 解譯為帶有(工件編號, 製程編號)的投料順序
     def decoding_os(self, particle: np.array) -> list:
         # 初始化
-        opra_ct = np.zeros(self.job_size, dtype=int)  # 紀錄每一工件的製程數
+        opra_ct = self.data["first_opra_of_each_job"].copy()  # 紀錄每一工件的製程數
         output = list()  # 帶有(工件編號, 製程編號)的投料順序
 
         # 取得原始 os
