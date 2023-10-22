@@ -24,26 +24,15 @@ def draw(pso, parameter: dict) -> None:
     for job, opra in os_:
         machine = ms[(job, opra)]
         length = parameter["data"]["regular"][(job, opra)][machine]  # 工時
-        # 若為第一道製程，則被選中機台的結束時間直接加上工時
-        if opra == 0:
-            start = 0
-            setuptime = pso.get_setuptime(
-                job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
-            )
-            Tm[machine] += length + setuptime
-            To[job, opra] = Tm[machine]
-            Jm[machine] = job
-            end = Tm[machine]
-        # 若不為第一道製程，則機台結束時間為 max(前一製程結束時間, 被選中機台結束時間) + 工時
-        else:
-            start = max(To[job, opra - 1], Tm[machine])
-            setuptime = pso.get_setuptime(
-                job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
-            )
-            Tm[machine] = max(To[job, opra - 1], setuptime + Tm[machine]) + length
-            To[job, opra] = Tm[machine]
-            Jm[machine] = job
-            end = Tm[machine]
+
+        start = max(To[job, opra - 1], Tm[machine])
+        setuptime = pso.get_setuptime(
+            job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
+        )
+        Tm[machine] = max(To[job, opra - 1], setuptime + Tm[machine]) + length
+        To[job, opra] = Tm[machine]
+        Jm[machine] = job
+        end = Tm[machine]
         gantt.append({"Job": job, "Machine": machine, "Start": start, "End": end})
     gantt = pd.DataFrame(gantt)
 

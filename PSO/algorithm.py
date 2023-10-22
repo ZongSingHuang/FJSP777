@@ -156,22 +156,13 @@ class PSO:
             machine = ms[(job, opra)]  # 機台編號
             length = self.data["regular"][(job, opra)][machine]  # 工時
 
-            # 若為第一道製程，則被選中機台的結束時間直接加上(換線時間+工時)
-            if opra == 0:
-                setuptime = self.get_setuptime(
-                    job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
-                )
-                Tm[machine] += setuptime + length
-                To[job, opra] = Tm[machine]
-                Jm[machine] = job
-            # 若不為第一道製程，則機台結束時間為 max(前一製程結束時間, 被選中機台結束時間+換線時間) + 工時
-            else:
-                setuptime = self.get_setuptime(
-                    job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
-                )
-                Tm[machine] = max(To[job, opra - 1], setuptime + Tm[machine]) + length
-                To[job, opra] = Tm[machine]
-                Jm[machine] = job
+            # 機台結束時間為 max(前一製程結束時間, 被選中機台結束時間+換線時間) + 工時
+            setuptime = self.get_setuptime(
+                job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
+            )
+            Tm[machine] = max(To[job, opra - 1], setuptime + Tm[machine]) + length
+            To[job, opra] = Tm[machine]
+            Jm[machine] = job
         return max(Tm)
 
     # 將 os 解譯為帶有(工件編號, 製程編號)的投料順序
