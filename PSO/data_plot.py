@@ -37,7 +37,9 @@ def draw(pso, parameter: dict) -> None:
         To[job, opra] = Tm[machine]
         Jm[machine] = job
         end = Tm[machine]
-        gantt.append({"Job": job, "Machine": machine, "Start": start, "End": end})
+        gantt.append(
+            {"Job": job, "Opra": opra, "Machine": machine, "Start": start, "End": end}
+        )
     gantt = pd.DataFrame(gantt)
     now = dt.datetime.now().strftime("%Y%m%d%H%M%S")
     gantt.to_excel(os.path.join(para_path, f"result_{now}.xlsx"), index=False)
