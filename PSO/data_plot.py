@@ -15,7 +15,9 @@ def draw(pso, parameter: dict) -> None:
 
     # 初始化
     Tm = np.zeros(machine_size)  # 每一機台的結束時間
-    To = np.zeros((job_size, max(parameter["data"]["opra"]["seq"])))  # 每一工件每一製程的結束時間
+    To = np.zeros(
+        (job_size, max(parameter["data"]["opra"]["seq"].values()))
+    )  # 每一工件每一製程的結束時間
     Jm = {
         machine: None for machine in parameter["data"]["machine"]["seq"]
     }  # 每一機台最後加工的 job(換線用)
