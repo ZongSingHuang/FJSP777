@@ -10,14 +10,14 @@ if __name__ == "__main__":
     )
 
     # 清洗工時直交表後，從中取得排程參數
-    parameter = data_clean.table(parameter=parameter)
+    parameter["data"] = data_clean.table(parameter=parameter)
 
     pso = PSO(parameter=parameter)
-    pso.run()
+    result = pso.run()
 
     # 文字打印
-    print("按照完全随机初始化的pso算法求得的最好的最大完工时间：", min(pso.pso_base))
-    print("按照完全随机初始化的pso算法求得的最好的工艺方案：", pso.gbest[0])
+    print(f"按照完全随机初始化的pso算法求得的最好的最大完工时间：{pso.gbest[0]}")
+    print(f"按照完全随机初始化的pso算法求得的最好的工艺方案：{pso.gbest[1]}")
     print(f"整个迭代过程所耗用的时间：{pso.cost:.2f}s")
 
     # 影像輸出

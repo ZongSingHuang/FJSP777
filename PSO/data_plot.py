@@ -5,29 +5,44 @@ from matplotlib.gridspec import GridSpec
 
 
 def draw(pso, parameter: dict) -> None:
-    # 初始化
-    Tm = np.zeros(parameter["fjsp"]["machine"]["size"])  # 每一機台的結束時間
-    To = np.zeros(
-        (parameter["fjsp"]["job"]["size"], max(parameter["fjsp"]["opra"]["seq"]))
-    )  # 每一工件每一製程的結束時間
+    # 複製
+    machine_size = parameter["data"]["machine"]["size"]
+    job_size = parameter["data"]["job"]["size"]
 
-    OS = pso.decoding_OS(particle=pso.gbest[1])
-    MS = pso.decoding_MS(particle=pso.gbest[1])
+    # 初始化
+    Tm = np.zeros(machine_size)  # 每一機台的結束時間
+    To = np.zeros((job_size, max(parameter["data"]["opra"]["seq"])))  # 每一工件每一製程的結束時間
+    Jm = {
+        machine: None for machine in parameter["data"]["machine"]["seq"]
+    }  # 每一機台最後加工的 job(換線用)
+
+    # 解碼
+    os_ = pso.decoding_os(particle=pso.gbest[1])
+    ms = pso.decoding_ms(particle=pso.gbest[1])
+
     gantt = list()
-    for job, opra in OS:
-        machine = MS[(job, opra)]
-        length = parameter["data"]["regular"][job][opra][machine]  # 工時
+    for job, opra in os_:
+        machine = ms[(job, opra)]
+        length = parameter["data"]["regular"][(job, opra)][machine]  # 工時
         # 若為第一道製程，則被選中機台的結束時間直接加上工時
         if opra == 0:
             start = 0
-            Tm[machine] += length
+            setuptime = pso.get_setuptime(
+                job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
+            )
+            Tm[machine] += length + setuptime
             To[job, opra] = Tm[machine]
+            Jm[machine] = job
             end = Tm[machine]
         # 若不為第一道製程，則機台結束時間為 max(前一製程結束時間, 被選中機台結束時間) + 工時
         else:
             start = max(To[job, opra - 1], Tm[machine])
-            Tm[machine] = max(To[job, opra - 1], Tm[machine]) + length
+            setuptime = pso.get_setuptime(
+                job=(Jm[machine], job), machine=machine, opra_0_need_setup=True
+            )
+            Tm[machine] = max(To[job, opra - 1], setuptime + Tm[machine]) + length
             To[job, opra] = Tm[machine]
+            Jm[machine] = job
             end = Tm[machine]
         gantt.append({"Job": job, "Machine": machine, "Start": start, "End": end})
     gantt = pd.DataFrame(gantt)
@@ -94,10 +109,10 @@ def draw(pso, parameter: dict) -> None:
     gs = GridSpec(2, 2)
     ax1 = plt.subplot(gs[0, 0])
     ax1.set_title("全局最优解的变化情况")
-    ax1.plot(pso.pso_base)
+    ax1.plot(pso.iter_gbest)
     ax2 = plt.subplot(gs[0, 1])
     ax2.set_title("每次迭代后种群适应度最小值的变化情况")
-    ax2.plot(pso.iter_process)
+    ax2.plot(pso.iter_best_pbest)
     ax3 = plt.subplot(gs[1, :])
     ax3.set_title("甘特圖")
     for index, row in gantt.iterrows():
