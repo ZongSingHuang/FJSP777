@@ -1,3 +1,6 @@
+import datetime as dt
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -8,6 +11,7 @@ def draw(pso, parameter: dict) -> None:
     # 複製
     machine_size = parameter["data"]["machine"]["size"]
     job_size = parameter["data"]["job"]["size"]
+    para_path = parameter["path"]["result"]
 
     # 初始化
     Tm = np.zeros(machine_size)  # 每一機台的結束時間
@@ -35,6 +39,8 @@ def draw(pso, parameter: dict) -> None:
         end = Tm[machine]
         gantt.append({"Job": job, "Machine": machine, "Start": start, "End": end})
     gantt = pd.DataFrame(gantt)
+    now = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    gantt.to_excel(os.path.join(para_path, f"result_{now}.xlsx"), index=False)
 
     colors = [
         "#1f77b4",
