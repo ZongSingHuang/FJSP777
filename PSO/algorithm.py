@@ -172,10 +172,10 @@ class PSO:
         output = list()  # 帶有(工件編號, 製程編號)的投料順序
 
         # 取得原始 os
-        os = particle[: self.opra_size]
+        os_ = particle[: self.opra_size]
 
         # 逐個將 os 附上相應的 opra
-        for job in os:
+        for job in os_:
             job = int(job)  # to int
             output.append((job, opra_ct[job]))  # (工件編號, 製程編號)
             opra_ct[job] += 1  # 更新
