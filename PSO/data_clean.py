@@ -16,7 +16,7 @@ def table(parameter: dict) -> dict:
     min_machine_of_opra = get_min_machine_from_each_opra(rawdata=raw)
 
     # 取得每一工件的第一製程編號
-    first_opra_of_each_job = get_first_opra_of_each_job(rawdata=raw)
+    first_opra_of_job = get_first_opra_of_job(rawdata=raw)
 
     # 機台數目
     machine_size = raw.columns.size
@@ -35,7 +35,7 @@ def table(parameter: dict) -> dict:
         "raw": raw,
         "regular": regular,
         "min_machine_of_opra": min_machine_of_opra,
-        "first_opra_of_each_job": first_opra_of_each_job,
+        "first_opra_of_job": first_opra_of_job,
         "machine": {"size": machine_size, "seq": machine_seq},
         "job": {"size": job_size, "seq": job_seq},
         "opra": {"size": opra_size, "seq": opra_seq},
@@ -83,7 +83,7 @@ def get_min_machine_from_each_opra(rawdata: pd.DataFrame) -> dict:
 
 
 # # 取得每一工件的第一製程編號
-def get_first_opra_of_each_job(rawdata: pd.DataFrame) -> dict:
+def get_first_opra_of_job(rawdata: pd.DataFrame) -> dict:
     # 複製
     raw = rawdata.copy()
 

@@ -11,7 +11,7 @@ class PSO:
         self.maxiter = parameter["algorithm"]["maxiter"]
         self.w = parameter["algorithm"]["w"]
         self.c1 = parameter["algorithm"]["c"][0]
-        self.c2 = parameter["algorithm"]["c1"][1]
+        self.c2 = parameter["algorithm"]["c"][1]
         self.data = parameter["data"]
         self.job_size = parameter["data"]["job"]["size"]
         self.opra_size = parameter["data"]["opra"]["size"]
@@ -56,7 +56,7 @@ class PSO:
                 velocity[idx] = (
                     self.w * velocity[idx]
                     + self.c1 * np.random.rand() * (pbest[idx][1] - particle)
-                    + self.c1 * np.random.rand() * (self.gbest[1] - particle)
+                    + self.c2 * np.random.rand() * (self.gbest[1] - particle)
                 )
                 # 位置更新
                 particle += velocity[idx]
@@ -168,7 +168,7 @@ class PSO:
     # 將 os 解譯為帶有(工件編號, 製程編號)的投料順序
     def decoding_os(self, particle: np.array) -> list:
         # 初始化
-        opra_ct = self.data["first_opra_of_each_job"].copy()  # 紀錄每一工件的製程數
+        opra_ct = self.data["first_opra_of_job"].copy()  # 紀錄每一工件的製程數
         output = list()  # 帶有(工件編號, 製程編號)的投料順序
 
         # 取得原始 os
